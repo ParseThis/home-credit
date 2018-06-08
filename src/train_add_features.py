@@ -114,11 +114,74 @@ CREDIT_CARD_BAL = os.path.join(HOME, 'data/credit_card_balance.csv')
 PREV_APP = os.path.join(HOME, 'data/previous_application.csv')
 INST_PAYMENT = os.path.join(HOME, 'data/installments_payments.csv')
 
-def get_bureau_features(data):
+CREDIT_ACTIVE_MAP = {'Closed': 0, 'Active' : 1, 'Sold' : 2, 'Bad debt' : 3, 'UNK' : 4}
 
+def active_credit_features(data):
+	features  = {}
+
+
+	csum = bureau[bureau.CREDIT_ACTIVE == 'Active'].groupby('SK_ID_CURR') \
+    	.agg({
+    			 'AMT_CREDIT_SUM' : sum ,
+    			 'AMT_ANNUITY' : sum, 
+    			 'AMT_CREDIT_SUM_DEBT' : sum,
+    			 'AMT_CREDIT_SUM_LIMIT' : np.mean
+    		})
+
+	data_csum = csum.merge(data, on='SK_ID_CURR', how='left')
+	credit_to_income = data_csum.apply(lambda x:  x['AMT_CREDIT_SUM'] / x['AMT_INCOME_TOTAL'], axis=1)
+	credit_dept_to_income = data_csum.apply(lambda x:  x['AMT_CREDIT_SUM_DEBT'] / x['AMT_INCOME_TOTAL'], axis=1)
+	avg_limit_to_income = data_csum.apply(lambda x:  x['AMT_CREDIT_SUM_LIMIT'] / x['AMT_INCOME_TOTAL'], axis=1)
+
+
+	bereau['has_over_due'] = (bureau.AMT_CREDIT_SUM_OVERDUE > 0) * 1
+	has_over_due = bureau.groupby('SK_ID_CURR')['has_over_due'].sum()
+
+	# overdue 
+	return features 
+
+
+
+
+def get_bureau_features(curr_app_data):
+
+	features = {}
 	bureau = pd.read_csv(BUREAU)
-	active_credit_group = bureau[bureau.CREDIT_ACTIVE == 'Active'].groupby('SK_ID_CURR')
+	bureau_bal = pd.read_csv(BUREAU_BAL)
+
+	# 
 	appl_bureau_group = bureau.groupby('SK_ID_CURR')
+	# dummy credidt active featuers 
+	dummies_credit_active = pd.get_dummies(bureau.CREDIT_ACTIVE, prefix='credit_active')
+	# ordinal credit active
+	credit_active_int = bureau.CREDIT_ACTIVE.map(lambda x: CREDIT_ACTIVE_MAP[x])
+	# bad credit mask
+	# bad_credit_mask = credit_active_int > 1
+	# bureau.CREDIT_ACTIVE.map(lambda x: credit_active_map[x])
+	active_credit_group = bureau[bureau.CREDIT_ACTIVE == 'Active']\
+			.groupby('SK_ID_CURR')
+
+	# diversity of credit status over loans
+	diverse_credit_status = bureau.groupby('SK_ID_CURR').apply(lambda x: len(set(x['CREDIT_ACTIVE'])))
+
+	# most recent credit status
+	latest_credit_status = appl_bureau_group.apply(lambda x: x[0])
+
+	# number of active credits
+	num_active_credit = appl_bureau_group.apply(lambda x: len(x['CREDIT_ACTIVE'] == 'Active'))
+
+	# cost of active credits 
+	# cost_of_active_credit = bureau.groupby(['SK_ID_CURR']).apply(lambda x: x['CREDIT_ACTIVE'] == 'Active')['AMOUNT_CREDIT_SUM'].sum()
+	# cost ofx actice  credit annuity
+	# cost active credit annuity over income ? how spread are they over credit
+
+
+	bad_credit_mask = (bureau.CREDIT_ACTIVE == 'Bad debt') | ( bureau.CREDIT_ACTIVE == 'Sold')
+	bureau['has_bad_credit_mask'] = bad_credit_mask
+	bad_past_credit = bureau.groupby('SK_ID_CURR')['has_bad_credit'].sum()
+
+
+	
 
 	# active_bureau_loans = bureau.filter(lambd.groupby()
 
