@@ -20,10 +20,12 @@ import gc
 from lightgbm import LGBMClassifier
 import xgboost as xgb
 import functools
-
+import os.path
 
 import logging
 logging.basicConfig(filename='example.log',level=logging.DEBUG)
+
+HOME = os.path.join(os.path.expanduser('~'), 'home-credit-default-risk')
 
 
 
@@ -86,6 +88,14 @@ CONTACT_FEATURES = """ FLAG_MOBIL
 CONTACT_FEATURES = list(map(str.strip, 	CONTACT_FEATURES))
 
 
+DROP_FEATURES = ['AMT_REQ_CREDIT_BUREAU_HOUR' ,
+     'AMT_REQ_CREDIT_BUREAU_DAY', 
+     'AMT_REQ_CREDIT_BUREAU_WEEK',
+     'AMT_REQ_CREDIT_BUREAU_MON',
+    'AMT_REQ_CREDIT_BUREAU_QRT']
+
+
+CUSTOM_FILLNA = [ 'AMT_REQ_CREDIT_BUREAU_YEAR']
 
 CENTER_FEATURES = ['AMT_ANNUITY', 'AMT_CREDIT', 'AMT_INCOME_TOTAL', 'AMT_GOODS_PRICE']
 
@@ -95,14 +105,14 @@ FOLDS  = 5
 
 
 
-INPUT = '../data/application_train.csv'
-TEST_INPUT = '../data/application_test.csv'
-BUREAU = '../data/bureau.csv'
-BUREAU_BAL = '../data/bureau_balance.csv'
-POS_CAHS_BAL = '../data/POS_CASH_balance.csv'
-CREDIT_CARD_BAL = '../data/credit_card_balance.csv'
-PREV_APP = '../data/previous_application.csv'
-INST_PAYMENT = '../data/installments_payments.csv'
+INPUT = os.path.join(HOME, 'data/application_train.csv')
+TEST_INPUT = os.path.join(HOME, 'data/application_test.csv')
+BUREAU = os.path.join(HOME, 'data/bureau.csv')
+BUREAU_BAL = os.path.join(HOME, 'data/bureau_balance.csv')
+POS_CAHS_BAL = os.path.join(HOME, 'data/POS_CASH_balance.csv')
+CREDIT_CARD_BAL = os.path.join(HOME, 'data/credit_card_balance.csv')
+PREV_APP = os.path.join(HOME, 'data/previous_application.csv')
+INST_PAYMENT = os.path.join(HOME, 'data/installments_payments.csv')
 
 def get_bureau_features(data):
 
@@ -156,11 +166,23 @@ def merge_grouping_in_sk_id(data, feature, feature_name):
 
 def get_features(train, test):
 
-
-
 	bureau =pd.read_csv(BUREAU)
 	train['app_complete_building'] = get_app_complete_features(train)
 	test['app_complete_building'] = get_app_complete_features(test)
+
+	features = {}
+	features['daily_income'] = data.AMT_INCOME_TOTAL / data.DAYS_EMPLOYED
+	features['cost_of_annuity'] = data.AMT_ANNUITY / data.DAYS_EMPLOYED
+	features['income_annuity_ratio'] = data.AMT_ANNUITY/ data.AMT_INCOME_TOTAL
+	features['income_goods_ratio'] = data.AMT_GOODS_PRICE / data.AMT_INCOME_TOTAL
+
+
+	feats_df = pd.DataFrame(features)
+	train = pd.concat(feats_df)
+	# FILL AMOUTN REQUEST WITH THE MEAN OF THE REQUESTED AMOUNTS
+	train['AMT_REQ_CREDIT_BUREAU_YEAR'] = \
+	    train['AMT_REQ_CREDIT_BUREAU_YEAR']\
+    	.fillna(train['AMT_REQ_CREDIT_BUREAU_YEAR'].mean())
 
 	# BUREAU FEATURES
 
@@ -173,6 +195,12 @@ def get_features(train, test):
 
 	train = merge_grouping_in_sk_id(train, num_active_credit, 'num_active_cbs')
 	test = merge_grouping_in_sk_id(test, num_active_credit, 'num_active_cbs')
+	train = merge_grouping_in_sk_id(train, num_credit_bureau_loans, 'num_credit_bureau_loans')
+	test = merge_grouping_in_sk_id(test, num_credit_bureau_loans, 'num_credit_bureau_loans')
+
+	del num_credit_bureau_loans
+	del num_active_credit
+	gc.collect()
 
 	train_center_features = [pd.DataFrame(dist_from_center(train, feat)) for feat in CENTER_FEATURES]
 	test_center_features = [pd.DataFrame(dist_from_center(test, feat)) for feat in CENTER_FEATURES]
@@ -200,27 +228,6 @@ def categorical_conversion(data, test):
 	    data[f_], indexer = pd.factorize(data[f_])
 	    test[f_] = indexer.get_indexer(test[f_])
 	return data, test
-
-
-def shuffle_weights(model, weights=None):
-    """Randomly permute the weights in `model`, or the given `weights`.
-
-    This is a fast approximation of re-initializing the weights of a model.
-
-    Assumes weights are distributed independently of the dimensions of the weight tensors
-      (i.e., the weights have the same distribution along each dimension).
-
-    :param Model model: Modify the weights of the given model.
-    :param list(ndarray) weights: The model's weights will be replaced by a random permutation of these weights.
-      If `None`, permute the model's current weights.
-    """
-    if weights is None:
-        weights = model.get_weights()
-    weights = [np.random.permutation(w.flat).reshape(w.shape) for w in weights]
-    # weights = [np.random.permutation(w) for w in weights]
-    model.set_weights(weights)
-
-
 
 
 
@@ -255,7 +262,7 @@ def train_model(data_, test_, y_, folds_):
         val_x, val_y = data_[feats].iloc[val_idx], y_.iloc[val_idx]
         
         clf = LGBMClassifier(
-            n_estimators=4000,
+            n_estimators=1000,
             learning_rate=0.03,
             num_leaves=30,
             colsample_bytree=.8,
@@ -299,28 +306,16 @@ def train_model(data_, test_, y_, folds_):
 
 if __name__ == "__main__":
 
-	data = pd.read_csv('../data/application_train.csv')
-	test = pd.read_csv('../data/application_test.csv')
-
-	# TESTING
-	# data = data.__next__()
-	# test = test.__next__()
-
+	data = pd.read_csv(INPUT)
+	test = pd.read_csv(TEST_INPUT)
 	kf = KFold(n_splits=FOLDS)
-
-
-	# bureau_bal = pd.read_csv('../data/bureau_balance.csv')
-	# pos_cash_bal = pd.read_csv('../data/POS_CASH_balance.csv')
-	# credit_card_bal = pd.read_csv('../data/credit_card_balance.csv')
-	# prev_app = pd.read_csv('../data/previous_application.csv')
-	# inst_payments = pd.read_csv('../data/installments_payments.csv')
 
 	data, test = categorical_conversion(data, test)
 	y = data.TARGET
 	del data['TARGET']
 	gc.collect()
 
-	# data, test = get_features(data, test)
+	data, test = get_features(data, test)
 	oof_preds, submission, feature_importance = train_model(data, test, y, kf)
 	print('DONE')
 
